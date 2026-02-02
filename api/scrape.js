@@ -1,72 +1,71 @@
 import { chromium } from '@sparticuz/chromium';
 import { chromium as playwrightChromium } from 'playwright-core';
-import { google } from 'googleapis';
 
 export default async function handler(req, res) {
+  // Protezione opzionale: controlla una API Key passata negli header
+  const authHeader = req.headers['x-api-key'];
+  if (process.env.SCRAPE_API_KEY && authHeader !== process.env.SCRAPE_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   let browser = null;
-  
+
   try {
-    // FIX: Se l'import nominativo è undefined, proviamo a recuperarlo diversamente
-    // o forziamo la logica di esecuzione.
+    // Configurazione Chromium per Vercel
     const executablePath = await chromium.executablePath();
 
     browser = await playwrightChromium.launch({
-      args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
+      args: chromium.args,
       executablePath: executablePath,
       headless: chromium.headless,
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 720 }
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
     });
+
     const page = await context.newPage();
 
-    // --- LOGICA DI SCRAPING (Invariata) ---
+    // --- LOGIN FULSHIP ---
     await page.goto(process.env.FULSHIP_LOGIN_URL, { waitUntil: 'networkidle' });
     await page.fill('#username', process.env.FULSHIP_USER);
     await page.fill('#password', process.env.FULSHIP_PASS);
     await page.click('button[type="submit"]');
+    
+    // Aspetta che il login sia completato verificando un elemento della dashboard
     await page.waitForLoadState('networkidle');
 
+    // --- NAVIGAZIONE PRODOTTI ---
     await page.goto(process.env.FULSHIP_PRODUCTS_URL, { waitUntil: 'networkidle' });
 
-    const data = await page.$$eval('table#products tbody tr', rows => {
+    // --- ESTRAZIONE DATI ---
+    const data = await page.$$eval('table#products tbody tr', (rows) => {
       return rows.map(r => {
         const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
         return {
-          sku: cols[0],
-          name: cols[1],
-          qty: cols[2],
-          location: cols[3],
+          sku: cols[0] || 'N/A',
+          name: cols[1] || 'N/A',
+          qty: cols[2] || '0',
+          location: cols[3] || 'N/A',
+          timestamp: new Date().toISOString()
         };
       });
     });
 
-    // --- GOOGLE SHEETS (Invariata) ---
-    const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+    await browser.close();
 
-    const sheets = google.sheets({ version: 'v4', auth });
-    const rows = data.map(d => [d.sku, d.name, d.qty, d.location, new Date().toISOString()]);
+    // Restituisce i dati a Make
+    res.status(200).json(data);
 
-    if (rows.length > 0) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'Sheet1!A:E',
-        valueInputOption: 'RAW',
-        requestBody: { values: rows },
-      });
-    }
-
-    res.status(200).json({ success: true, rows: data.length });
   } catch (err) {
-    console.error("Scrape Error:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (browser !== null) {
-      await browser.close();
-    }
+    console.error("Errore durante lo scraping:", err);
+    
+    if (browser) await browser.close();
+    
+    res.status(500).json({ 
+      error: "Failed to scrape data", 
+      details: err.message 
+    });
   }
 }
