@@ -7,56 +7,57 @@ const PORT = process.env.PORT || 10000;
 app.get('/api/scrape', async (req, res) => {
   let browser = null;
   try {
-    console.log("Avvio sessione di scraping...");
-    
+    console.log("Avvio sessione...");
     browser = await puppeteer.launch({
       headless: "new",
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox', 
-        '--disable-dev-shm-usage',
-        '--disable-gpu'
-      ]
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     
     const page = await browser.newPage();
-    // Impostiamo un User Agent reale per evitare blocchi
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
 
-    // 1. Navigazione al Login
-    await page.goto(process.env.FULSHIP_LOGIN_URL, { 
-      waitUntil: 'networkidle2', 
-      timeout: 60000 
-    });
+    // 1. Caricamento pagina di Login
+    await page.goto(process.env.FULSHIP_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // 2. Attesa e inserimento credenziali
-    // Usiamo waitForSelector per evitare l'errore "No element found"
-    console.log("In attesa dei campi di login...");
-    await page.waitForSelector('#username', { visible: true, timeout: 15000 });
-    await page.waitForSelector('#password', { visible: true, timeout: 15000 });
+    // 2. Identificazione dinamica dei campi (Ragionamento basato sulla struttura visiva)
+    // Dato che gli ID mancano, cerchiamo il primo e il secondo input di tipo testo/password
+    console.log("Ricerca campi di input basata sulla struttura...");
+    await page.waitForSelector('input', { visible: true, timeout: 15000 });
 
-    await page.type('#username', process.env.FULSHIP_USER, { delay: 50 });
-    await page.type('#password', process.env.FULSHIP_PASS, { delay: 50 });
+    // Selezioniamo tutti gli input presenti nel form
+    const inputs = await page.$$('input');
+    
+    if (inputs.length < 2) {
+      throw new Error("Impossibile trovare i campi di input nella pagina.");
+    }
 
-    // 3. Click sul Login e attesa navigazione
-    await Promise.all([
-      page.click('button[type="submit"]'),
-      page.waitForNavigation({ waitUntil: 'networkidle2' })
-    ]);
+    // Inserimento credenziali (solitamente il primo è l'utente, il secondo la password)
+    await inputs[0].type(process.env.FULSHIP_USER, { delay: 100 });
+    await inputs[1].type(process.env.FULSHIP_PASS, { delay: 100 });
 
-    console.log("Login effettuato, navigazione verso i prodotti...");
+    // Cerchiamo il pulsante di login per testo, dato che l'ID potrebbe mancare
+    const [button] = await page.$x("//button[contains(., 'Log In')]");
+    
+    if (button) {
+      await Promise.all([
+        button.click(),
+        page.waitForNavigation({ waitUntil: 'networkidle2' })
+      ]);
+    } else {
+      // Fallback: premiamo invio sull'ultimo campo
+      await page.keyboard.press('Enter');
+      await page.waitForNavigation({ waitUntil: 'networkidle2' });
+    }
 
-    // 4. Navigazione alla tabella prodotti
-    await page.goto(process.env.FULSHIP_PRODUCTS_URL, { 
-      waitUntil: 'networkidle2', 
-      timeout: 60000 
-    });
+    console.log("Login riuscito. Estrazione dati in corso...");
 
-    // Aspettiamo che la tabella sia effettivamente caricata
-    await page.waitForSelector('table#products', { timeout: 15000 });
+    // 3. Navigazione e Scraping tabella
+    await page.goto(process.env.FULSHIP_PRODUCTS_URL, { waitUntil: 'networkidle2' });
+    
+    // Aspettiamo che appaia la tabella (se l'ID tabella è corretto)
+    await page.waitForSelector('table', { timeout: 15000 });
 
-    // 5. Estrazione dati (Reasoning: analitico e strutturato per la tabella)
-    const data = await page.$$eval('table#products tbody tr', (rows) => {
+    const data = await page.$$eval('table tbody tr', (rows) => {
       return rows.map(r => {
         const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
         return { 
@@ -69,22 +70,13 @@ app.get('/api/scrape', async (req, res) => {
     });
 
     await browser.close();
-    console.log(`Scraping concluso con successo. Trovati ${data.length} prodotti.`);
-    
-    // Invio dei dati a Make
     res.status(200).json(data);
 
   } catch (err) {
-    console.error("ERRORE DURANTE LO SCRAPING:", err.message);
+    console.error("Errore critico:", err.message);
     if (browser) await browser.close();
-    
-    res.status(500).json({ 
-      error: "Errore durante l'esecuzione", 
-      message: err.message 
-    });
+    res.status(500).json({ error: "Scraping failed", message: err.message });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server Fulship Scraper attivo sulla porta ${PORT}`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`Server pronto su porta ${PORT}`));
