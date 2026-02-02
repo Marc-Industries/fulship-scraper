@@ -1,6 +1,6 @@
 // api/scrape.js
-import { chromium } from '@sparticuz/chromium';
-import { chromium as playwrightChromium } from 'playwright-core';
+import chromium from '@sparticuz/chromium';
+import playwright from 'playwright-core';
 import { google } from 'googleapis';
 
 export default async function handler(req, res) {
@@ -61,3 +61,4 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err.toString() });
   }
 }
+
