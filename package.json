@@ -1,7 +1,6 @@
 {
   "name": "fulship-scraper",
   "version": "1.0.0",
-  "main": "api/scrape.js",
   "type": "module",
   "dependencies": {
     "@sparticuz/chromium": "119.0.0",
