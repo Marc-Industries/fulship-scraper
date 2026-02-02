@@ -1,18 +1,10 @@
 {
   "name": "fulship-scraper",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "main": "api/scrape.js",
+  "type": "module",
   "dependencies": {
-    "@sparticuz/chromium": "^143.0.4",
-    "googleapis": "^171.1.0",
-    "playwright-core": "^1.58.1"
+    "@sparticuz/chromium": "119.0.0",
+    "playwright-core": "1.40.0"
   }
 }
