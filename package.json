@@ -5,10 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "build": "npm install && npx playwright install chromium --with-deps"
+    "build": "npm install"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "playwright": "^1.40.0"
+    "puppeteer": "^22.0.0"
   }
 }
