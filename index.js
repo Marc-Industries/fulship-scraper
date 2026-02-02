@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 10000;
 app.get('/api/scrape', async (req, res) => {
   let browser = null;
   try {
-    console.log("Avvio sessione...");
+    console.log("Inizio sessione di scraping con selettori verificati...");
     browser = await puppeteer.launch({
       headless: "new",
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -19,61 +19,54 @@ app.get('/api/scrape', async (req, res) => {
     // 1. Caricamento pagina di Login
     await page.goto(process.env.FULSHIP_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // 2. Identificazione dinamica dei campi (Ragionamento basato sulla struttura visiva)
-    // Dato che gli ID mancano, cerchiamo il primo e il secondo input di tipo testo/password
-    console.log("Ricerca campi di input basata sulla struttura...");
-    await page.waitForSelector('input', { visible: true, timeout: 15000 });
-
-    // Selezioniamo tutti gli input presenti nel form
-    const inputs = await page.$$('input');
+    // 2. Inserimento credenziali con ID corretti (da DevTools)
+    console.log("Inserimento credenziali...");
+    await page.waitForSelector('#id_username', { visible: true, timeout: 15000 });
     
-    if (inputs.length < 2) {
-      throw new Error("Impossibile trovare i campi di input nella pagina.");
+    // Pulizia e digitazione lenta per simulare un umano
+    await page.click('#id_username', { clickCount: 3 });
+    await page.type('#id_username', process.env.FULSHIP_USER, { delay: 100 });
+    
+    await page.type('#id_password', process.env.FULSHIP_PASS, { delay: 100 });
+
+    // 3. Click sul pulsante Log In (usiamo la classe del pulsante visibile nei log)
+    console.log("Invio form...");
+    await Promise.all([
+      page.keyboard.press('Enter'), // Più affidabile del click se il pulsante non ha ID
+      page.waitForNavigation({ waitUntil: 'networkidle2' })
+    ]);
+
+    // Verifichiamo se siamo entrati (se l'URL non è più quello di login)
+    if (page.url().includes('login')) {
+        throw new Error("Login fallito: credenziali errate o blocco CSRF.");
     }
 
-    // Inserimento credenziali (solitamente il primo è l'utente, il secondo la password)
-    await inputs[0].type(process.env.FULSHIP_USER, { delay: 100 });
-    await inputs[1].type(process.env.FULSHIP_PASS, { delay: 100 });
-
-    // Cerchiamo il pulsante di login per testo, dato che l'ID potrebbe mancare
-    const [button] = await page.$x("//button[contains(., 'Log In')]");
-    
-    if (button) {
-      await Promise.all([
-        button.click(),
-        page.waitForNavigation({ waitUntil: 'networkidle2' })
-      ]);
-    } else {
-      // Fallback: premiamo invio sull'ultimo campo
-      await page.keyboard.press('Enter');
-      await page.waitForNavigation({ waitUntil: 'networkidle2' });
-    }
-
-    console.log("Login riuscito. Estrazione dati in corso...");
-
-    // 3. Navigazione e Scraping tabella
+    // 4. Navigazione alla tabella prodotti
+    console.log("Navigazione alla tabella prodotti...");
     await page.goto(process.env.FULSHIP_PRODUCTS_URL, { waitUntil: 'networkidle2' });
     
-    // Aspettiamo che appaia la tabella (se l'ID tabella è corretto)
+    // Aspettiamo la tabella (selettore generico 'table' se l'ID non è noto)
     await page.waitForSelector('table', { timeout: 15000 });
 
     const data = await page.$$eval('table tbody tr', (rows) => {
       return rows.map(r => {
         const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+        if (cols.length < 3) return null; // Salta righe vuote o di intestazione
         return { 
           sku: cols[0] || 'N/A', 
           name: cols[1] || 'N/A', 
           qty: cols[2] || '0', 
           location: cols[3] || 'N/A' 
         };
-      });
+      }).filter(item => item !== null);
     });
 
     await browser.close();
+    console.log(`Operazione completata. Righe estratte: ${data.length}`);
     res.status(200).json(data);
 
   } catch (err) {
-    console.error("Errore critico:", err.message);
+    console.error("ERRORE:", err.message);
     if (browser) await browser.close();
     res.status(500).json({ error: "Scraping failed", message: err.message });
   }
