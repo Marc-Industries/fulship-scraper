@@ -1,6 +1,9 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/api/scrape", "destination": "/api/scrape.mjs" }
-  ]
+  "functions": {
+    "api/*.js": {
+      "memory": 1792,
+      "maxDuration": 60
+    }
+  }
 }
