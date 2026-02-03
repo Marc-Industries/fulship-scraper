@@ -12,56 +12,50 @@ app.get('/api/scrape', async (req, res) => {
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1400, height: 1000 });
 
-    // 1. LOGIN CON LOG DI VERIFICA
-    console.log("Navigazione alla pagina di login...");
+    // 1. LOGIN
+    console.log("Navigazione al login...");
     await page.goto(process.env.FULSHIP_LOGIN_URL, { waitUntil: 'networkidle2' });
-
-    console.log("Inserimento credenziali...");
-    await page.waitForSelector('#id_username', { visible: true, timeout: 10000 });
-    await page.type('#id_username', process.env.FULSHIP_USER, { delay: 50 });
-    await page.type('#id_password', process.env.FULSHIP_PASS, { delay: 50 });
-
-    console.log("Invio form di login...");
+    
+    await page.waitForSelector('#id_username', { visible: true });
+    await page.type('#id_username', process.env.FULSHIP_USER);
+    await page.type('#id_password', process.env.FULSHIP_PASS);
+    
+    console.log("Invio form...");
     await Promise.all([
-      page.click('button[type="submit"]'), // Clicca esplicitamente il tasto Log In
+      page.click('button[type="submit"]'),
       page.waitForNavigation({ waitUntil: 'networkidle2' })
     ]);
 
     let allProducts = [];
 
-    // 2. LOOP SULLE 5 PAGINE CON ATTESA CARICAMENTO TABELLE
+    // 2. LOOP PAGINE
     for (let p = 1; p <= 5; p++) {
       console.log(`Scraping pagina ${p}...`);
-      await page.goto(`https://cloud.fullship.it/products/?page=${p}`, { waitUntil: 'networkidle0' });
+      await page.goto(`https://cloud.fullship.it/products/?page=${p}`, { waitUntil: 'networkidle2' });
 
-      // Aspettiamo che appaia almeno una tabella di prodotti
-      try {
-        await page.waitForSelector('table tbody tr', { timeout: 5000 });
-      } catch (e) {
-        console.log(`Nessuna tabella trovata a pagina ${p}, salto...`);
-        continue;
-      }
+      // ATTESA CRUCIALE: Aspettiamo che almeno una tabella HTMX sia caricata
+      await page.waitForFunction(() => {
+        const tables = document.querySelectorAll('table tbody tr');
+        return tables.length > 0;
+      }, { timeout: 15000 }).catch(() => console.log("Timeout attesa tabelle a pag " + p));
 
       const pageData = await page.evaluate(() => {
         const results = [];
-        // Selezioniamo tutti i blocchi card che contengono i titoli dei prodotti
-        const cards = document.querySelectorAll('.card'); 
+        // Selezioniamo i gruppi (Spartan Strength+, Spartan Testo, ecc.)
+        const groups = document.querySelectorAll('li.list-group-item'); 
         
-        cards.forEach(card => {
-          // Il titolo del gruppo (es: Spartan Testo) è nell'header della card o sopra la tabella
-          const groupTitle = card.previousElementSibling?.innerText.trim() || 
-                             card.querySelector('.card-header')?.innerText.trim() || "";
+        groups.forEach(group => {
+          const groupTitle = group.querySelector('.d-flex.justify-content-between div')?.innerText.trim() || "";
+          const rows = group.querySelectorAll('table tbody tr');
           
-          const rows = card.querySelectorAll('table tbody tr');
           rows.forEach(row => {
             const cols = row.querySelectorAll('td');
             if (cols.length >= 8) {
               results.push({
                 group: groupTitle,
-                variant: cols[1]?.innerText.trim(), // Colonna Title
+                variant: cols[1]?.innerText.trim(), // Contiene ID e Gusto/Tipo
                 qty: cols[7]?.innerText.trim()     // Colonna Available
               });
             }
@@ -69,19 +63,19 @@ app.get('/api/scrape', async (req, res) => {
         });
         return results;
       });
-      console.log(`Trovati ${pageData.length} elementi a pagina ${p}`);
+
+      console.log(`Trovati ${pageData.length} elementi.`);
       allProducts = allProducts.concat(pageData);
     }
 
     await browser.close();
-    console.log(`Totale varianti estratte: ${allProducts.length}`);
     res.status(200).json({ data: allProducts });
 
   } catch (err) {
-    console.error("ERRORE CRITICO:", err.message);
+    console.error("Errore:", err.message);
     if (browser) await browser.close();
     res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server attivo su porta ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server attivo`));
