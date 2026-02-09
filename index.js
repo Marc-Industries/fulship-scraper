@@ -10,14 +10,15 @@ app.get('/api/scrape', async (req, res) => {
     console.log("Avvio Browser...");
     browser = await puppeteer.launch({
       headless: "new",
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, // Per Render
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 1200 });
 
-    // 1. Login - Uso dei selettori ID confermati dalle tue immagini
+    // 1. Login
+    console.log("Accesso alla pagina di login...");
     await page.goto(process.env.FULSHIP_LOGIN_URL, { waitUntil: 'networkidle2' });
     await page.waitForSelector('#id_username', { visible: true });
     await page.type('#id_username', process.env.FULSHIP_USER);
@@ -35,44 +36,48 @@ app.get('/api/scrape', async (req, res) => {
       console.log(`Scraping pagina ${p}...`);
       await page.goto(`https://cloud.fullship.it/products/?page=${p}`, { waitUntil: 'networkidle2' });
 
-      // Attesa che HTMX carichi le tabelle (basata sui tuoi DevTools)
+      // Attesa che HTMX carichi i dati nelle tabelle
       await page.waitForFunction(() => {
         return document.querySelectorAll('table tbody tr').length > 0;
-      }, { timeout: 15000 }).catch(() => console.log("Nessuna tabella caricata a pag " + p));
+      }, { timeout: 15000 }).catch(() => console.log(`Timeout: Nessuna tabella a pag ${p}`));
 
       const pageData = await page.evaluate(() => {
         const results = [];
-        // Selettore basato sulle tue card HTMX
-        const items = document.querySelectorAll('li.list-group-item');
+        // Selezioniamo direttamente le righe di tutte le tabelle presenti nella pagina
+        const rows = document.querySelectorAll('table tbody tr');
         
-        items.forEach(item => {
-          // Il titolo del gruppo (es: Spartan Strength+)
-          const groupTitle = item.querySelector('.d-flex.justify-content-between div b')?.innerText.trim() || "";
-          
-          const rows = item.querySelectorAll('table tbody tr');
-          rows.forEach(row => {
-            const cols = row.querySelectorAll('td');
-            if (cols.length >= 8) {
+        rows.forEach(row => {
+          const cols = row.querySelectorAll('td');
+          // Verifichiamo che la riga abbia almeno 9 colonne (Available è la nona)
+          if (cols.length >= 9) {
+            const variantText = cols[1]?.innerText.trim(); // Colonna 'Title'
+            const availableValue = cols[8]?.innerText.trim(); // Colonna 'Available' (Indice 8)
+
+            // Filtriamo solo le righe che contengono un ID valido
+            if (variantText && variantText.includes("(ID =")) {
               results.push({
-                group: groupTitle,
-                variant: cols[1]?.innerText.trim(), // Title
-                qty: cols[7]?.innerText.trim()     // Available
+                group: "", // Opzionale, rimosso per semplificare il match su Google Sheets
+                variant: variantText,
+                qty: availableValue // Manteniamo 'qty' per compatibilità con lo script GS e Make
               });
             }
-          });
+          }
         });
         return results;
       });
+
+      console.log(`Pagina ${p}: Estratti ${pageData.length} varianti.`);
       allProducts = allProducts.concat(pageData);
     }
 
     await browser.close();
+    console.log(`Scraping completato. Totale prodotti: ${allProducts.length}`);
     res.status(200).json({ data: allProducts });
 
   } catch (err) {
     console.error("Errore critico:", err.message);
     if (browser) await browser.close();
-    res.status(500).json({ error: err.message, message: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
